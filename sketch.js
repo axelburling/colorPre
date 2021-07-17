@@ -1,3 +1,13 @@
+let data;
+
+let xs, ys;
+
+let model;
+
+let lossP;
+let labelP
+let rSlider, gSlider, bSlider;
+
 let labelList = [
   "red-ish",
   "green-ish",
@@ -10,85 +20,110 @@ let labelList = [
   "grey-ish",
 ];
 
-let r, g, b;
-
-let database;
-let colorDatabase;
-
-function pickColor() {
-  r = floor(random(255));
-  g = floor(random(255));
-  b = floor(random(255));
-  background(r, g, b);
+function preload() {
+  data = loadJSON("colorData.json");
 }
 
 function setup() {
-  var firebaseConfig = {
-    apiKey: "AIzaSyA-LQWJ-iYzrc4Ni57nH8_0z9oshDSUYyk",
-    authDomain: "color-predictior.firebaseapp.com",
-    databaseURL:
-      "https://color-predictior-default-rtdb.europe-west1.firebasedatabase.app",
-    projectId: "color-predictior",
-    storageBucket: "color-predictior.appspot.com",
-    messagingSenderId: "308939934981",
-    appId: "1:308939934981:web:34868e234f70280c90bb6c",
-  };
-  // Initialize Firebase
-  firebase.initializeApp(firebaseConfig);
-  database = firebase.database();
-  colorDatabase = database.ref("color");
+  createCanvas(600, 400);
 
-  createCanvas(400, 400);
-  pickColor();
+  lossP = createP("Loss");
+  labelP = createP(""); 
 
-  let buttons = [];
-  labelList.map((label) => {
-    buttons.push(createButton(label));
+  rSlider = createSlider(0, 255, 255);
+  gSlider = createSlider(0, 255, 0);
+  bSlider = createSlider(0, 255, 255);
+
+  let colors = [];
+  let labels = [];
+  for (let record of data.entries) {
+    let col = [record.r / 255, record.g / 255, record.b / 255];
+    colors.push(col);
+    labels.push(labelList.indexOf(record.label));
+  }
+
+  // console.log(colors)
+
+  xs = tf.tensor2d(colors);
+
+  let labelsTensor = tf.tensor1d(labels, "int32");
+
+  ys = tf.oneHot(labelsTensor, 9);
+  labelsTensor.dispose();
+
+  // console.log(xs.shape)
+  // console.log(ys.shape)
+  // xs.print()
+  // ys.print()
+
+  model = tf.sequential();
+
+  let hidden = tf.layers.dense({
+    units: 16,
+    activation: "sigmoid",
+    inputShape: [3],
   });
 
-  for (let i = 0; i < buttons.length; i++) {
-    buttons[i].size(100, 50);
-    buttons[i].style("font-size", "18px");
-    buttons[i].style('margin', '20px')
-    buttons[i].mousePressed(sendData);
-  }
+  let output = tf.layers.dense({
+    units: 9,
+    activation: "softmax",
+  });
 
-  let btn = createButton("get data");
-  btn.mousePressed(getData);
-  btn.size(100, 50);
-  btn.style("font-size", "18px");
-  btn.style('margin', '20px')
+  model.add(hidden);
+  model.add(output);
 
-  function sendData() {
-    let data = {
-      r,
-      g,
-      b,
-      label: this.html(),
-    };
+  const lr = 0.2;
+  const optimizer = tf.train.sgd(lr);
 
-    console.log("saving Data: " + data);
+  model.compile({
+    optimizer,
+    loss: "categoricalCrossentropy",
+  });
 
-    let color = colorDatabase.push(data, (err) => {
-      if (err) {
-        console.log("something went wrong");
-        console.error(err);
-      } else {
-        pickColor();
-        console.log("Success!!! and new color");
-      }
-    });
-    console.log("Firebase generated key: " + color.key);
+  train().then((results) => {
+    console.log(results.history.loss);
+  });
+}
 
-    console.log(this.html());
-  }
+async function train() {
+  const options = {
+    epochs: 30,
+    validationSplit: 0.1,
+    shuffle: true,
+    callbacks: {
+      onTrainBegin: () => console.log("training start"),
+      onTrainEnd: () => console.log("training complete"),
+      onBatchEnd: tf.nextFrame,
+      onEpochEnd: async (num, logs) => {
+        await tf.nextFrame();
+        lossP.html("Loss: " + logs.loss);
+      },
+    },
+  };
 
-  function getData() {
-    colorDatabase.once("value", (result) => {
-      let data = result.val();
+  return await model.fit(xs, ys, options);
+}
 
-      console.log(Object.keys(data).length);
-      createP(Object.keys(data).length);
-    });
-  }
+function draw() {
+  let r = rSlider.value();
+  let g = gSlider.value();
+  let b = bSlider.value();
+
+  background(r, g, b);
+
+  tf.tidy(() => {
+    const xs = tf.tensor2d([r / 255, g / 255, b / 255], [1, 3]);
+  
+    let results = model.predict(xs);
+    let index = results.argMax(1).dataSync()
+  
+    // index.print();
+    let label = labelList[index]
+    labelP.html(label)
+  })
+
+
+  // stroke(255)
+  // strokeWeight(4)
+  // line(frameCount % width, 0, frameCount % width, height)
 }
